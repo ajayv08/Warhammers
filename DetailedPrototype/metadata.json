@@ -1,0 +1,6 @@
+{
+  "name": "AI-Assisted Emergency Triage & Early Risk Detection",
+  "description": "Fictional clinical command center prototype demonstrating multi-parameter triage scoring, early warning detection, explainable risk factors, and AI-assisted visual evidence analysis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
