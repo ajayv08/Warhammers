@@ -27,7 +27,7 @@ jobs:
       - name: Build DetailedPrototype
         working-directory: DetailedPrototype
         run: |
-          npm install
+          npm install --legacy-peer-deps
           npm run build -- --base=/Warhammers/DetailedPrototype/
 
       - name: Prepare website
@@ -41,7 +41,7 @@ jobs:
 
           if [ -f "Prototype/package.json" ]; then
             cd Prototype
-            npm install
+            npm install --legacy-peer-deps
             npm run build -- --base=/Warhammers/Prototype/
             cd ..
             cp -r Prototype/dist/* site/Prototype/
