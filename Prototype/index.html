@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Emergency Triage & Risk Monitoring</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>body{margin:0}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } = React;
+
+// ============================================================================
+//  AI Emergency Triage & Risk Monitoring — Single-File Dashboard Component
+//  Drop into any Vite / Next.js (client component) project with Tailwind.
+//  Charts: Recharts | State: React hooks | Live sim: 1s interval engine
+// ============================================================================
+
+
+// ----------------------------- Seed dataset --------------------------------
+const PATIENTS = [
+  { id: "P-1001", name: "James Okafor",   age: 54, sex: "M", chiefComplaint: "Crushing chest pain radiating to left arm", arrival: "00:12", hr: 116, sbp: 84,  dbp: 54,  rr: 26, spo2: 90, temp: 37.1, gcs: 15 },
+  { id: "P-1002", name: "Sofia Ramirez",  age: 31, sex: "F", chiefComplaint: "Shortness of breath & wheezing",            arrival: "00:26", hr: 118, sbp: 132, dbp: 84,  rr: 30, spo2: 89, temp: 37.4, gcs: 15 },
+  { id: "P-1027", name: "Margaret Chen",  age: 78, sex: "F", chiefComplaint: "Generalized weakness, found down at home",  arrival: "01:04", hr: 88,  sbp: 138, dbp: 82,  rr: 18, spo2: 96, temp: 36.9, gcs: 15, silentDeteriorator: true },
+  { id: "P-1003", name: "Daniel Novak",   age: 67, sex: "M", chiefComplaint: "Fever, confusion, productive cough",        arrival: "01:10", hr: 104, sbp: 118, dbp: 70,  rr: 24, spo2: 93, temp: 38.4, gcs: 13 },
+  { id: "P-1004", name: "Aisha Bello",    age: 26, sex: "F", chiefComplaint: "Abdominal pain, RLQ tenderness",            arrival: "01:22", hr: 96,  sbp: 124, dbp: 78,  rr: 18, spo2: 98, temp: 38.0, gcs: 15 },
+  { id: "P-1005", name: "Robert Whitfield", age: 71, sex: "M", chiefComplaint: "Slurred speech, facial droop (stroke code)", arrival: "01:31", hr: 92, sbp: 186, dbp: 104, rr: 20, spo2: 97, temp: 36.7, gcs: 12 },
+  { id: "P-1006", name: "Emily Larsen",   age: 44, sex: "F", chiefComplaint: "MVC, moderate lower-back pain",             arrival: "01:47", hr: 88,  sbp: 128, dbp: 80,  rr: 16, spo2: 99, temp: 36.8, gcs: 15 },
+  { id: "P-1007", name: "Mohammed Al-Farsi", age: 58, sex: "M", chiefComplaint: "Palpitations & dizziness",                 arrival: "02:03", hr: 142, sbp: 110, dbp: 68,  rr: 22, spo2: 97, temp: 37.0, gcs: 15 },
+  { id: "P-1008", name: "Grace Kim",      age: 35, sex: "F", chiefComplaint: "Migraine, photophobia",                     arrival: "02:15", hr: 78,  sbp: 118, dbp: 76,  rr: 14, spo2: 99, temp: 36.6, gcs: 15 },
+  { id: "P-1009", name: "Henry Dubois",   age: 82, sex: "M", chiefComplaint: "Fall from standing, hip pain",              arrival: "02:28", hr: 84,  sbp: 136, dbp: 78,  rr: 17, spo2: 96, temp: 36.5, gcs: 15 },
+  { id: "P-1010", name: "Lily Zhang",     age: 12, sex: "F", chiefComplaint: "Wrist sprain after sports injury",          arrival: "02:40", hr: 92,  sbp: 108, dbp: 70,  rr: 18, spo2: 99, temp: 37.2, gcs: 15 },
+];
+
+// --------------------------- Risk model (mock) ------------------------------
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+function computeRisk(p) {
+  const factors = [];
+  // SpO2 — strongest driver
+  if (p.spo2 < 94) {
+    const sev = p.spo2 < 88 ? 2.0 : 1.0;
+    factors.push({ key: "spo2", label: `Low SpO₂ (${p.spo2}%)`,           value: clamp((94 - p.spo2) * 5.5 * sev, 4, 46), detail: `SpO₂ ${p.spo2}% < 94% threshold` });
+  }
+  if (p.rr > 22 || p.rr < 10)
+    factors.push({ key: "rr",   label: `Elevated RR (${p.rr}/min)`,        value: clamp(Math.abs(p.rr - 18) * 3.0, 4, 30), detail: `RR ${p.rr}/min (normal 12–20)` });
+  if (p.gcs < 15)
+    factors.push({ key: "gcs",  label: `Altered GCS (${p.gcs})`,           value: (15 - p.gcs) * 15, detail: `GCS ${p.gcs} — altered mental status` });
+  if (p.sbp < 100)
+    factors.push({ key: "sbp",  label: `Hypotension (SBP ${p.sbp})`,       value: clamp((100 - p.sbp) * 1.4, 5, 26), detail: `SBP ${p.sbp} mmHg < 100` });
+  else if (p.sbp > 180)
+    factors.push({ key: "sbp",  label: `Severe HTN (SBP ${p.sbp})`,        value: (p.sbp - 180) * 0.5, detail: `SBP ${p.sbp} mmHg > 180` });
+  if (p.hr > 110 || p.hr < 50)
+    factors.push({ key: "hr",   label: `Abnormal HR (${p.hr} bpm)`,        value: clamp(Math.abs(p.hr - 80) * 0.7, 4, 28), detail: `HR ${p.hr} bpm outside 50–110` });
+  if (p.temp >= 38.5 || p.temp < 36)
+    factors.push({ key: "temp", label: `Abnormal Temp (${p.temp.toFixed(1)}°C)`, value: 10, detail: `Temp ${p.temp.toFixed(1)}°C outside 36–38.5` });
+  if (p.age >= 75)
+    factors.push({ key: "age",  label: "Advanced age (>75)",               value: 6, detail: `${p.age} yrs — frailty modifier` });
+  factors.sort((a, b) => b.value - a.value);
+  const raw = factors.reduce((s, f) => s + f.value, 0);
+  const score = Math.round(clamp(14 + raw, 0, 100)); // baseline 14
+  return { score, factors };
+}
+
+function triageLevel(score) {
+  if (score >= 80) return { level: 1, tag: "Critical", badge: "ESI 1", ring: "border-red-500",    text: "text-red-600",    bg: "bg-red-50",    dot: "bg-red-500",    bar: "#ef4444" };
+  if (score >= 60) return { level: 2, tag: "Urgent",   badge: "ESI 2", ring: "border-orange-400", text: "text-orange-600", bg: "bg-orange-50",  dot: "bg-orange-400", bar: "#f97316" };
+  if (score >= 40) return { level: 3, tag: "Guarded",  badge: "ESI 3", ring: "border-amber-300",  text: "text-amber-600",  bg: "bg-amber-50",   dot: "bg-amber-400",  bar: "#f59e0b" };
+  return               { level: 4, tag: "Stable",    badge: "ESI 4/5", ring: "border-emerald-300", text: "text-emerald-600", bg: "bg-emerald-50", dot: "bg-emerald-400", bar: "#10b981" };
+}
+
+function buildSummary(p, factors) {
+  if (!factors.length) return `${p.name.split(" ")[0]} is currently stable across all monitored vitals.`;
+  const top = factors.slice(0, 3).map((f) => f.label.replace(/ \(.+\)/, ""));
+  const { score } = computeRisk(p);
+  const lead = score >= 80 ? "High risk driven by " : score >= 60 ? "Moderate risk contributed by " : "Mild elevation from ";
+  const phrase = top.length === 1 ? top[0] : top.slice(0, -1).join(", ") + ", and " + top[top.length - 1];
+  const action = score >= 80 ? "urgent bedside review" : "routine reassessment";
+  return `${lead}${phrase}. ${p.sex === "F" ? "She" : "He"} requires ${action}.`;
+}
+
+// ------------------------------ Tiny SVG icons ------------------------------
+const Icon = ({ d, className = "w-4 h-4" }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d={d} /></svg>
+);
+const HeartIcon = (c) => <Icon {...c} d="M22 12h-4l-3 9L9 3l-3 9H2" />;
+const SearchIcon = (c) => <Icon {...c} d="M21 21l-4.3-4.3M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z" />;
+const AlertIcon  = (c) => <Icon {...c} d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />;
+
+// ------------------------- Feature contribution chart -----------------------
+function FeatureChart({ factors, color }) {
+  const ref = React.useRef(null);
+  const chartRef = React.useRef(null);
+  const top = factors.slice(0, 6);
+  React.useEffect(() => {
+    if (!ref.current || !top.length) return;
+    if (chartRef.current) chartRef.current.destroy();
+    chartRef.current = new Chart(ref.current, {
+      type: "bar",
+      data: {
+        labels: top.map((f) => f.label),
+        datasets: [{ data: top.map((f) => +f.value.toFixed(1)), backgroundColor: top.map((f) => color), borderRadius: 6, maxBarThickness: 22 }]
+      },
+      options: {
+        indexAxis: "y", responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => ` +${c.parsed.x} pts — ${top[c.dataIndex].detail}` } } },
+        scales: { x: { max: 50, grid: { color: "#f1f5f9" } }, y: { grid: { display: false }, ticks: { font: { size: 11 } } } }
+      }
+    });
+    return () => chartRef.current && chartRef.current.destroy();
+  }, [factors, color]);
+  if (!top.length) return <p className="text-sm text-slate-500 py-6 text-center">No abnormal contributors — all vitals within normal limits.</p>;
+  return <div className="h-56"><canvas ref={ref} /></div>;
+}
+
+// ------------------------------ Patient card --------------------------------
+function Vital({ label, value, unit, abnormal }) {
+  return (
+    <div className={`rounded-lg px-2.5 py-2 ${abnormal ? "bg-red-50 border border-red-200" : "bg-slate-50 border border-slate-100"}`}>
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</div>
+      <div className={`text-sm font-bold tabular-nums ${abnormal ? "text-red-600" : "text-slate-700"}`}>
+        {value} <span className="text-[10px] font-medium text-slate-400">{unit}</span>
+      </div>
+    </div>
+  );
+}
+
+function PatientCard({ p, rank, onWhy }) {
+  const { score, factors } = useMemo(() => computeRisk(p), [p]);
+  const t = triageLevel(score);
+  const critical = score >= 80;
+  return (
+    <div className={`relative rounded-2xl border-2 ${t.ring} bg-white shadow-sm transition-shadow hover:shadow-md ${critical ? "animate-[flash_1s_ease-in-out_infinite]" : ""}`}>
+      <div className={`flex items-center gap-3 rounded-t-2xl px-4 py-2.5 ${t.bg}`}>
+        <span className="text-xs font-black text-slate-400 w-6">#{rank}</span>
+        <span className={`h-2.5 w-2.5 rounded-full ${t.dot} ${critical ? "animate-ping" : ""}`} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-slate-800">{p.name}</span>
+            <span className="text-xs text-slate-400">{p.age}{p.sex} · {p.id}</span>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${t.bg} ${t.text} border ${t.ring}`}>{t.badge} · {t.tag}</span>
+          </div>
+          <div className="text-xs text-slate-500 truncate">{p.chiefComplaint} <span className="text-slate-300">· arrived {p.arrival}</span></div>
+        </div>
+        <div className="text-center shrink-0">
+          <div className={`text-3xl font-black tabular-nums leading-none ${critical ? "text-red-600" : t.text}`}>{score}</div>
+          <div className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mt-0.5">Risk</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 px-4 pt-3">
+        <Vital label="HR" value={p.hr} unit="bpm" abnormal={p.hr > 110 || p.hr < 50} />
+        <Vital label="BP" value={`${p.sbp}/${p.dbp}`} unit="mmHg" abnormal={p.sbp < 100 || p.sbp > 180} />
+        <Vital label="RR" value={p.rr} unit="/min" abnormal={p.rr > 22 || p.rr < 10} />
+        <Vital label="SpO₂" value={p.spo2} unit="%" abnormal={p.spo2 < 94} />
+        <Vital label="Temp" value={p.temp.toFixed(1)} unit="°C" abnormal={p.temp >= 38.5 || p.temp < 36} />
+        <Vital label="GCS" value={p.gcs} unit="/15" abnormal={p.gcs < 15} />
+      </div>
+
+      <div className="flex items-center justify-between px-4 py-3">
+        <div className="flex gap-1.5 flex-wrap min-w-0">
+          {factors.slice(0, 3).map((f) => (
+            <span key={f.key} className="text-[10px] font-semibold px-2 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200 truncate max-w-[150px]">{f.label}</span>
+          ))}
+          {factors.length === 0 && <span className="text-[10px] text-emerald-600 font-semibold px-2 py-1 bg-emerald-50 rounded-full border border-emerald-200">All vitals within normal limits</span>}
+        </div>
+        <button onClick={() => onWhy(p)}
+          className="ml-2 shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold px-3 py-1.5 hover:bg-slate-700 transition-colors">
+          <HeartIcon className="w-3.5 h-3.5" /> Why? / Risk Analysis
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// --------------------------------- Toasts -----------------------------------
+function Toasts({ alerts, dismiss }) {
+  return (
+    <div className="fixed bottom-16 right-4 z-[60] flex flex-col gap-2 w-80">
+      {alerts.map((a) => (
+        <div key={a.id} className="flex items-start gap-3 rounded-xl border-2 border-red-500 bg-red-600 text-white px-4 py-3 shadow-xl animate-[slideIn_.25s_ease-out]">
+          <AlertIcon className="w-5 h-5 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="text-sm font-bold leading-snug">{a.title}</div>
+            <div className="text-xs text-red-100 mt-0.5">{a.sub}</div>
+          </div>
+          <button onClick={() => dismiss(a.id)} className="text-red-200 hover:text-white text-lg leading-none">&times;</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ------------------------------ Main dashboard ------------------------------
+function EDTriageDashboard() {
+  const [patients, setPatients] = useState(PATIENTS);
+  const [live, setLive] = useState(false);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("All");
+  const [modal, setModal] = useState(null);
+  const [toasts, setToasts] = useState([]);
+  const [lastTick, setLastTick] = useState(Date.now());
+  const tickRef = useRef(0);
+  const baselines = useRef({});
+  const prevScores = useRef({});
+  const alertedRef = useRef({});
+  const cardRefs = useRef({});
+  const positions = useRef({});
+
+  // ------------------------- FLIP reorder animation -------------------------
+  useLayoutEffect(() => {
+    Object.entries(cardRefs.current).forEach(([id, el]) => {
+      const prev = positions.current[id];
+      if (prev != null) {
+        const dy = prev - el.offsetTop;
+        if (Math.abs(dy) > 2) {
+          el.style.transition = "none";
+          el.style.transform = `translateY(${dy}px)`;
+          requestAnimationFrame(() => {
+            el.style.transition = "transform .55s cubic-bezier(.22,1,.36,1)";
+            el.style.transform = "translateY(0)";
+          });
+        }
+      }
+      positions.current[id] = el.offsetTop;
+    });
+  });
+
+  // ----------------------- Alert helper (deduped) ---------------------------
+  const fireAlert = useCallback((p, score) => {
+    setToasts((t) => {
+      if (t.some((x) => x.pid === p.id)) return t;
+      return [...t, { id: `${p.id}-${Date.now()}`, pid: p.id, title: `Patient ${p.name} requires urgent review!`, sub: `Risk score crossed 80 → ${score}. Escalate to ESI 1.` }];
+    });
+    setTimeout(() => setToasts((t) => t.filter((x) => x.pid !== p.id)), 8000);
+  }, []);
+
+  // --------------------------- Live simulation ------------------------------
+  useEffect(() => {
+    if (!live) return;
+    const id = setInterval(() => {
+      tickRef.current += 1;
+      const t = tickRef.current;
+      setLastTick(Date.now());
+      setPatients((ps) =>
+        ps.map((p) => {
+          const j = (n, amp) => +(n + (Math.random() - 0.5) * amp).toFixed(1);
+          if (p.silentDeteriorator) {
+            // Silent deteriorator: 60s degradation curve, then plateaus critically
+            const prog = Math.min(1, t / 60);
+            const gcs = prog > 0.75 ? 13 : prog > 0.5 ? 14 : 15;
+            return { ...p, hr: Math.round(88 + 8 * prog), rr: Math.round(18 + 14 * prog), spo2: +(96 - 12 * prog).toFixed(0), temp: +(36.9 + 0.7 * prog).toFixed(1), gcs };
+          }
+          // mean-reverting jitter around each patient's baseline (no random walk)
+          if (!baselines.current[p.id]) baselines.current[p.id] = { hr: p.hr, rr: p.rr, spo2: p.spo2, sbp: p.sbp };
+          const b = baselines.current[p.id];
+          return { ...p,
+            hr: Math.round(clamp(b.hr + (Math.random() - 0.5) * 4, 45, 150)),
+            rr: Math.round(clamp(b.rr + (Math.random() - 0.5) * 1.6, 10, 36)),
+            spo2: Math.round(clamp(b.spo2 + (Math.random() - 0.5) * 1.2, 82, 100)),
+            sbp: Math.round(clamp(b.sbp + (Math.random() - 0.5) * 6, 80, 200)),
+          };
+        })
+      );
+    }, 1000);
+    return () => clearInterval(id);
+  }, [live]);
+
+  // ------------------- Crossing detection + counters ------------------------
+  const scored = useMemo(() => patients.map((p) => ({ p, ...computeRisk(p) })), [patients]);
+  const sorted = useMemo(() => [...scored].sort((a, b) => b.score - a.score), [scored]);
+
+  useEffect(() => {
+    scored.forEach(({ p, score }) => {
+      const prev = prevScores.current[p.id] ?? score;
+      // 5-point hysteresis: latch the alert at 80, only re-arm below 75
+      if (score >= 80 && prev < 80 && !alertedRef.current[p.id]) {
+        alertedRef.current[p.id] = true;
+        fireAlert(p, score);
+      }
+      if (score < 75) alertedRef.current[p.id] = false;
+      prevScores.current[p.id] = score;
+    });
+  }, [scored, fireAlert]);
+
+  const counts = useMemo(() => {
+    const c = { Critical: 0, Urgent: 0, Guarded: 0, Stable: 0 };
+    scored.forEach(({ score }) => c[triageLevel(score).tag]++);
+    return c;
+  }, [scored]);
+
+  // ------------------------- Filter + search --------------------------------
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return sorted.filter(({ p, score }) => {
+      const tag = triageLevel(score).tag;
+      const matchF = filter === "All" || tag === filter;
+      const matchQ = !q || [p.name, p.id, p.chiefComplaint].join(" ").toLowerCase().includes(q);
+      return matchF && matchQ;
+    });
+  }, [sorted, query, filter]);
+
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
+  const ago = Math.max(0, Math.round((now - lastTick) / 1000));
+  const criticalNow = sorted.filter((s) => s.score >= 80);
+
+  return (
+    <div className="min-h-screen bg-slate-100 font-sans text-slate-800">
+      {/* Flash animation keyframes */}
+      <style>{`
+        @keyframes flash { 0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,.55);} 50% { box-shadow: 0 0 0 6px rgba(239,68,68,.15); border-color:#ef4444;} }
+        @keyframes slideIn { from { transform: translateX(40px); opacity: 0;} to { transform: translateX(0); opacity: 1;} }
+      `}</style>
+
+      {/* ------------------------- Red alert banner ------------------------- */}
+      {criticalNow.length > 0 && (
+        <div className="sticky top-0 z-50 flex items-center justify-center gap-3 bg-red-600 text-white px-4 py-2 text-sm font-bold animate-pulse shadow-lg">
+          <AlertIcon className="w-4 h-4" />
+          {criticalNow.length} patient{criticalNow.length > 1 ? "s" : ""} at CRITICAL risk ({criticalNow.map((c) => c.p.name).join(", ")}) — immediate physician review required
+        </div>
+      )}
+
+      {/* ------------------------------ Header ------------------------------ */}
+      <header className="bg-white border-b border-slate-200 px-5 pt-5 pb-4">
+        <div className="flex flex-wrap items-center gap-4 justify-between max-w-6xl mx-auto">
+          <div>
+            <h1 className="text-xl font-black tracking-tight text-slate-900 flex items-center gap-2">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-red-600 text-white"><HeartIcon className="w-5 h-5" /></span>
+              AI Emergency Triage &amp; Risk Monitoring
+            </h1>
+            <p className="text-xs text-slate-400 mt-1">
+              Live: <span className={`inline-block h-2 w-2 rounded-full mr-1 ${live ? "bg-emerald-500 animate-pulse" : "bg-slate-300"}`} />
+              {live ? "vitals stream active" : "stream paused"} · Last updated: {ago}s ago
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {Object.entries(counts).map(([k, v]) => {
+              const col = k === "Critical" ? "bg-red-100 text-red-700 border-red-200" : k === "Urgent" ? "bg-orange-100 text-orange-700 border-orange-200" : k === "Guarded" ? "bg-amber-100 text-amber-700 border-amber-200" : "bg-emerald-100 text-emerald-700 border-emerald-200";
+              return <span key={k} className={`text-xs font-bold px-3 py-1.5 rounded-full border ${col}`}>{v} {k}</span>;
+            })}
+          </div>
+        </div>
+        {/* Controls */}
+        <div className="flex flex-wrap items-center gap-3 mt-4 max-w-6xl mx-auto">
+          <div className="relative flex-1 min-w-[220px]">
+            <SearchIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, ID, or complaint…"
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400" />
+          </div>
+          <select value={filter} onChange={(e) => setFilter(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-slate-400">
+            {["All", "Critical", "Urgent", "Guarded", "Stable"].map((f) => <option key={f}>{f}</option>)}
+          </select>
+          <button onClick={() => { tickRef.current = 0; setLive((l) => !l); }}
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold transition-colors ${live ? "bg-red-600 text-white hover:bg-red-700" : "bg-emerald-600 text-white hover:bg-emerald-700"}`}>
+            <span className={`h-2 w-2 rounded-full bg-white ${live ? "animate-pulse" : ""}`} />
+            {live ? "■ Stop Live Stream" : "▶ Simulate Live Vitals Stream"}
+          </button>
+        </div>
+      </header>
+
+      {/* --------------------------- Priority queue -------------------------- */}
+      <main className="max-w-6xl mx-auto px-5 py-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold uppercase tracking-widest text-slate-400">Live Priority Queue · sorted by risk score</h2>
+          <span className="text-xs text-slate-400 tabular-nums">{filtered.length} of {patients.length} patients</span>
+        </div>
+        {filtered.map(({ p }, i) => (
+          <div key={p.id} ref={(el) => { cardRefs.current[p.id] = el; }}>
+            <PatientCard p={p} rank={i + 1} onWhy={setModal} />
+          </div>
+        ))}
+        {filtered.length === 0 && (
+          <div className="rounded-2xl border-2 border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-400">No patients match the current search / filter.</div>
+        )}
+      </main>
+
+      {/* ------------------------ Explainability modal ----------------------- */}
+      {modal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/60 p-4" onClick={() => setModal(null)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between px-5 py-4 border-b border-slate-100">
+              <div>
+                <h3 className="font-black text-slate-900">Why this risk score?</h3>
+                <p className="text-xs text-slate-500">{modal.name} · {modal.age}{modal.sex} · {modal.id} · {modal.chiefComplaint}</p>
+              </div>
+              <button onClick={() => setModal(null)} className="text-slate-400 hover:text-slate-700 text-2xl leading-none">&times;</button>
+            </div>
+            <div className="px-5 py-4">
+              <FeatureChart factors={computeRisk(modal).factors} color={triageLevel(computeRisk(modal).score).bar} />
+              <div className="mt-4 rounded-xl bg-slate-50 border border-slate-200 px-4 py-3">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Clinical Summary</div>
+                <p className="text-sm text-slate-700 leading-relaxed">{buildSummary(modal, computeRisk(modal).factors)}</p>
+              </div>
+            </div>
+            <div className="px-5 pb-4 text-right">
+              <button onClick={() => setModal(null)} className="rounded-lg bg-slate-900 text-white text-xs font-bold px-4 py-2 hover:bg-slate-700">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Toasts alerts={toasts} dismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
+
+      {/* ------------------------------ Footer ------------------------------- */}
+      <footer className="border-t border-slate-200 bg-white mt-8">
+        <div className="max-w-6xl mx-auto px-5 py-4 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs text-slate-400">AI Emergency Triage &amp; Risk Monitoring v0.9 · Synthetic demo data only</span>
+          <span className="text-xs font-bold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">Decision-support prototype. Not for clinical use.</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<EDTriageDashboard />);
+</script>
+</body>
+</html>
