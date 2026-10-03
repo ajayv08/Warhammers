@@ -1,0 +1,71 @@
+name: Deploy Both Prototypes
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build DetailedPrototype
+        working-directory: DetailedPrototype
+        run: |
+          npm install
+          npm run build -- --base=/Warhammers/DetailedPrototype/
+
+      - name: Prepare website
+        run: |
+          mkdir -p site/DetailedPrototype
+          cp -r DetailedPrototype/dist/* site/DetailedPrototype/
+
+      - name: Prepare Prototype
+        run: |
+          mkdir -p site/Prototype
+
+          if [ -f "Prototype/package.json" ]; then
+            cd Prototype
+            npm install
+            npm run build -- --base=/Warhammers/Prototype/
+            cd ..
+            cp -r Prototype/dist/* site/Prototype/
+          else
+            cp -r Prototype/* site/Prototype/
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
